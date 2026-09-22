@@ -1,0 +1,6 @@
+{
+  "name": "Harf Bulma Labirenti",
+  "description": "Çocuklar için eğlenceli ve eğitici harf labirenti oyunu. Sahildeki harf taşlarını takip ederek hazine sandığına ulaşın.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
