@@ -1,0 +1,14 @@
+{
+  "background_color": "#ffffff",
+  "description": "Çocuklar için eğlenceli ve eğitici harf labirenti oyunu. Sahildeki harf taşlarını takip ederek hazine sandığına ulaşın.",
+  "dir": "ltr",
+  "display": "standalone",
+  "name": "Harf Labirenti",
+  "orientation": "any",
+  "scope": "/labirent-oyunu/",
+  "short_name": "harf.labirent",
+  "start_url": "/labirent-oyunu/",
+  "theme_color": "#ffffff",
+  "id": "blmlbrnt",
+  "lang": "tr"
+}
