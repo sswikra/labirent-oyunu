@@ -1,46 +1,53 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { LevelData, ActiveScreen } from '../types';
+import { LevelData, PlayerStats, StoneNode } from '../types';
 import { sound } from '../utils/sound';
+import { buildRandomizedLevelNodes } from '../utils/mazeGenerator';
 import { TopBar } from './TopBar';
-import { Volume2, Sparkles, RotateCcw, ArrowRight, Lightbulb } from 'lucide-react';
+import { Volume2, Sparkles, RotateCcw, ArrowRight, Lightbulb, Shuffle } from 'lucide-react';
 
 interface GameScreenProps {
-  level: LevelData;
+  levels: LevelData[];
+  currentLevel: LevelData;
+  playerStats: PlayerStats;
   onLevelComplete: (levelId: number, stars: number) => void;
+  onSelectLevel: (levelId: number) => void;
   onNextLevel: () => void;
-  onBackToMenu: () => void;
   soundEnabled: boolean;
   onToggleSound: () => void;
-  activeScreen: ActiveScreen;
-  onNavigate: (screen: ActiveScreen) => void;
 }
 
 export const GameScreen: React.FC<GameScreenProps> = ({
-  level,
+  levels,
+  currentLevel,
+  playerStats,
   onLevelComplete,
+  onSelectLevel,
   onNextLevel,
-  onBackToMenu,
   soundEnabled,
   onToggleSound,
-  activeScreen,
-  onNavigate,
 }) => {
+  // Dynamically randomized connected stone nodes for the active level
+  const [nodes, setNodes] = useState<StoneNode[]>(() =>
+    buildRandomizedLevelNodes(currentLevel.targetLetter)
+  );
   const [foundIds, setFoundIds] = useState<Set<string>>(new Set());
   const [wobbleId, setWobbleId] = useState<string | null>(null);
   const [hintedId, setHintedId] = useState<string | null>(null);
-  const [speechMessage, setSpeechMessage] = useState<string>(level.storyPrompt);
-  const [timerSeconds, setTimerSeconds] = useState<number>(level.initialTimeSeconds);
+  const [speechMessage, setSpeechMessage] = useState<string>(
+    `Hazineye ulaşmak için "${currentLevel.targetLetter}" taşlarını sırayla takip et!`
+  );
+  const [timerSeconds, setTimerSeconds] = useState<number>(currentLevel.initialTimeSeconds);
   const [isVictory, setIsVictory] = useState<boolean>(false);
   const [sparkles, setSparkles] = useState<{ id: number; x: number; y: number; dx: string; dy: string }[]>([]);
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const sparkleCountRef = useRef(0);
 
-  const targetNodes = level.nodes.filter((n) => n.isTarget);
+  const targetNodes = nodes.filter((n) => n.isTarget);
   const totalTargets = targetNodes.length;
   const collectedCount = foundIds.size;
 
-  // Calculate stars based on collected count and time
+  // Calculate stars based on collected count
   const starsEarned =
     collectedCount === 0
       ? 1
@@ -50,15 +57,32 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       ? 2
       : 3;
 
-  // Reset state when level changes
-  useEffect(() => {
+  // Regenerate a fresh, randomized connected path
+  const handleRegeneratePath = useCallback(() => {
+    sound.playWoodClick();
+    const freshNodes = buildRandomizedLevelNodes(currentLevel.targetLetter);
+    setNodes(freshNodes);
     setFoundIds(new Set());
     setWobbleId(null);
     setHintedId(null);
-    setSpeechMessage(level.storyPrompt);
-    setTimerSeconds(level.initialTimeSeconds);
+    setTimerSeconds(currentLevel.initialTimeSeconds);
     setIsVictory(false);
-  }, [level]);
+    const msg = `Yeni bir "${currentLevel.targetLetter}" yolu hazırlandı! Başlangıç taşını bul ve takip et!`;
+    setSpeechMessage(msg);
+    sound.speak(msg);
+  }, [currentLevel.targetLetter, currentLevel.initialTimeSeconds]);
+
+  // Whenever level changes (e.g. user chooses Ü, S, Ö, Y, D, or Z), generate a fresh path
+  useEffect(() => {
+    const freshNodes = buildRandomizedLevelNodes(currentLevel.targetLetter);
+    setNodes(freshNodes);
+    setFoundIds(new Set());
+    setWobbleId(null);
+    setHintedId(null);
+    setSpeechMessage(`Hazineye ulaşmak için "${currentLevel.targetLetter}" taşlarını sırayla takip et!`);
+    setTimerSeconds(currentLevel.initialTimeSeconds);
+    setIsVictory(false);
+  }, [currentLevel.id, currentLevel.targetLetter, currentLevel.initialTimeSeconds]);
 
   // Countdown Timer
   useEffect(() => {
@@ -75,12 +99,12 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     return () => clearInterval(interval);
   }, [isVictory]);
 
-  // Spawn visual sparkle particles on success
-  const spawnSparkles = useCallback((clientX: number, clientY: number) => {
+  // Spawn visual sparkle particles
+  const spawnSparklesForNode = useCallback((nodeLeft: number, nodeTop: number) => {
     if (!viewportRef.current) return;
     const rect = viewportRef.current.getBoundingClientRect();
-    const x = clientX - rect.left;
-    const y = clientY - rect.top;
+    const x = (rect.width * nodeLeft) / 100;
+    const y = (rect.height * nodeTop) / 100;
 
     const newSparkles: { id: number; x: number; y: number; dx: string; dy: string }[] = [];
     const count = 10;
@@ -104,36 +128,36 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     }, 850);
   }, []);
 
-  // Handle Stone Selection
-  const handleNodeClick = (e: React.MouseEvent<HTMLButtonElement>, node: typeof level.nodes[0]) => {
+  // Handle Stone Click
+  const handleNodeClick = (e: React.MouseEvent<HTMLButtonElement>, node: StoneNode) => {
+    e.preventDefault();
     e.stopPropagation();
 
     if (node.isTarget) {
       if (foundIds.has(node.id)) {
-        // Already found
         sound.speak(`Harf ${node.letter}`);
         return;
       }
 
-      // Successful discovery!
+      // Success
       const newFound = new Set(foundIds);
       newFound.add(node.id);
       setFoundIds(newFound);
 
       sound.playSuccess();
-      spawnSparkles(e.clientX, e.clientY);
+      spawnSparklesForNode(node.left, node.top);
 
       const encouragements = [
-        `Harika! Bir "${level.targetLetter}" taşı buldun!`,
-        `Aferin sana! Yolu adım adım tamamlıyorsun!`,
-        `Çok iyi gidiyorsun! İşte bir "${level.targetLetter}" daha!`,
-        `Hazineye çok yaklaştın, devam et!`,
+        `Aferin! Bir "${currentLevel.targetLetter}" taşı buldun!`,
+        `Harika gidiyorsun! Devam et!`,
+        `Yolu adım adım tamamlıyorsun!`,
+        `İşte bir tane daha "${currentLevel.targetLetter}"!`,
+        `Hazineye çok yaklaştın!`,
       ];
       const randomMsg = encouragements[Math.floor(Math.random() * encouragements.length)];
       setSpeechMessage(randomMsg);
       sound.speak(node.letter);
 
-      // Clear hint if this was hinted
       if (hintedId === node.id) {
         setHintedId(null);
       }
@@ -143,30 +167,41 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         setTimeout(() => {
           setIsVictory(true);
           sound.playVictory();
-          onLevelComplete(level.id, 3);
-        }, 500);
+          onLevelComplete(currentLevel.id, 3);
+        }, 450);
       }
     } else {
-      // Wrong Letter Clicked
+      // Wrong stone
       sound.playWobble();
       setWobbleId(node.id);
-      const wrongMsg = `Bu taş "${node.letter}" harfi. Biz "${level.targetLetter}" harfini arıyoruz!`;
+      const wrongMsg = `Bu taş "${node.letter}" harfi. Biz "${currentLevel.targetLetter}" arıyoruz!`;
       setSpeechMessage(wrongMsg);
       sound.speak(wrongMsg);
 
       setTimeout(() => {
         setWobbleId((curr) => (curr === node.id ? null : curr));
-      }, 550);
+      }, 500);
     }
   };
 
-  // Provide visual hint
+  // Hint button: selects the next unfound target stone in order of the stepping path
   const handleGiveHint = () => {
     sound.playWoodClick();
-    const nextUnfound = targetNodes.find((n) => !foundIds.has(n.id));
+    const sortedUnfound = targetNodes
+      .filter((n) => !foundIds.has(n.id))
+      .sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
+
+    const nextUnfound = sortedUnfound[0];
     if (nextUnfound) {
       setHintedId(nextUnfound.id);
-      const hintMsg = `Bak! İşte bir "${level.targetLetter}" taşı orada parıldıyor!`;
+      let hintMsg: string;
+      if (nextUnfound.orderIndex === 1) {
+        hintMsg = `Bak! Labirentin başlangıç "${currentLevel.targetLetter}" taşı orada parıldıyor!`;
+      } else if (nextUnfound.orderIndex === totalTargets) {
+        hintMsg = `Hazine sandığına giden son "${currentLevel.targetLetter}" taşı orada!`;
+      } else {
+        hintMsg = `Sıradaki "${currentLevel.targetLetter}" taşı orada parıldıyor, onu takip et!`;
+      }
       setSpeechMessage(hintMsg);
       sound.speak(hintMsg);
 
@@ -174,38 +209,29 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         setHintedId(null);
       }, 2500);
     } else {
-      const allFoundMsg = `Bütün "${level.targetLetter}" taşlarını buldun! İnci sandığına dokun!`;
+      const allFoundMsg = `Bütün "${currentLevel.targetLetter}" taşlarını buldun! İnci sandığına dokun!`;
       setSpeechMessage(allFoundMsg);
       sound.speak(allFoundMsg);
     }
   };
 
-  // Read message aloud
+  // Speak speech aloud
   const handleSpeakSpeech = () => {
     sound.speak(speechMessage);
   };
 
-  // Restart level
-  const handleRestart = () => {
-    sound.playWoodClick();
-    setFoundIds(new Set());
-    setTimerSeconds(level.initialTimeSeconds);
-    setIsVictory(false);
-    setSpeechMessage(level.storyPrompt);
-  };
-
-  // Compute SVG trail coordinates for discovered targets
+  // SVG trail coordinates: connects found target stones along the sequence
   const discoveredTargetCoords = targetNodes
     .filter((n) => foundIds.has(n.id))
     .sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0))
     .map((n) => ({
-      x: n.left + n.width / 2,
-      y: n.top + n.height / 2,
+      x: n.left,
+      y: n.top,
     }));
 
   return (
     <div className="relative w-full h-screen bg-[#123136] flex items-center justify-center overflow-hidden p-0 sm:p-2">
-      {/* Main 16:9 Viewport Container */}
+      {/* 16:9 Viewport matching the kiosk / tablet display */}
       <main
         ref={viewportRef}
         id="maze-viewport"
@@ -215,45 +241,81 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         <div className="absolute inset-0 w-full h-full overflow-hidden pointer-events-none select-none">
           <img
             id="bg-art"
-            src={level.bgImage}
-            alt={level.title}
+            src={currentLevel.bgImage}
+            alt="Harf Bulma Labirenti Sahil ve Deniz İllüstrasyonu"
             className="w-full h-full object-cover select-none pointer-events-none"
             loading="eager"
             referrerPolicy="no-referrer"
           />
-          {/* Subtle ocean atmosphere tint */}
-          <div className="absolute inset-0 bg-gradient-to-t from-emerald-950/15 via-transparent to-black/15 pointer-events-none" />
         </div>
 
-        {/* SVG Trail for Discovered Letters Path */}
+        {/* Dynamic Sign Overlays for Current Target Letter */}
+        {/* 1. Top Wooden Sign by the Cliff */}
+        <div
+          className="absolute z-15 pointer-events-none flex items-center justify-center -translate-x-1/2 -translate-y-1/2"
+          style={{ left: '32.8%', top: '29.8%', width: '7.6%', height: '7.8%' }}
+        >
+          <div className="wood-plank px-2 py-0.5 flex items-center gap-1 shadow-md scale-90 sm:scale-100 border-2 border-amber-950">
+            <span className="font-baloo font-black text-amber-100 text-sm sm:text-base md:text-xl drop-shadow">
+              {currentLevel.targetLetter}
+            </span>
+            <span className="text-[10px] sm:text-xs">🧭</span>
+          </div>
+        </div>
+
+        {/* 2. Wooden Sign on the Treasure Chest */}
+        <div
+          className="absolute z-15 pointer-events-none flex items-center justify-center -translate-x-1/2 -translate-y-1/2"
+          style={{ left: '66.8%', top: '53.0%', width: '7.2%', height: '6.4%' }}
+        >
+          <div className="wood-plank px-2.5 py-0.5 shadow-md scale-85 sm:scale-95 border-2 border-amber-950">
+            <span className="font-baloo font-black text-amber-100 text-xs sm:text-base md:text-lg drop-shadow">
+              {currentLevel.targetLetter}
+            </span>
+          </div>
+        </div>
+
+        {/* 3. Bottom Wooden Sign on the Post */}
+        <div
+          className="absolute z-15 pointer-events-none flex items-center justify-center -translate-x-1/2 -translate-y-1/2"
+          style={{ left: '46.2%', top: '70.5%', width: '7.4%', height: '6.6%' }}
+        >
+          <div className="wood-plank px-2.5 py-0.5 shadow-md scale-85 sm:scale-95 border-2 border-amber-950">
+            <span className="font-baloo font-black text-amber-100 text-xs sm:text-base md:text-lg drop-shadow">
+              {currentLevel.targetLetter}
+            </span>
+          </div>
+        </div>
+
+        {/* SVG Connecting Trail for Discovered Target Letters */}
         {discoveredTargetCoords.length > 1 && (
           <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
             <polyline
               points={discoveredTargetCoords.map((c) => `${c.x}%,${c.y}%`).join(' ')}
               fill="none"
               stroke="#22c55e"
-              strokeWidth="4"
+              strokeWidth="5"
               strokeDasharray="6 6"
               strokeLinecap="round"
-              className="drop-shadow-[0_0_8px_rgba(74,222,128,0.8)] animate-pulse"
+              className="drop-shadow-[0_0_10px_rgba(74,222,128,1)] animate-pulse"
             />
           </svg>
         )}
 
         {/* Top HUD Bar */}
         <TopBar
-          chapterNumber={level.chapterNumber}
-          levelTitle={level.title}
-          targetLetter={level.targetLetter}
+          levels={levels}
+          currentLevel={currentLevel}
           timerSeconds={timerSeconds}
           starsEarned={starsEarned}
           collectedCount={collectedCount}
           totalTargets={totalTargets}
           soundEnabled={soundEnabled}
+          playerStats={playerStats}
           onToggleSound={onToggleSound}
-          onBackToMenu={onBackToMenu}
-          activeScreen={activeScreen}
-          onNavigate={onNavigate}
+          onSelectLevel={onSelectLevel}
+          onRestartLevel={handleRegeneratePath}
+          onRegeneratePath={handleRegeneratePath}
         />
 
         {/* Interactive Stone Letters Layer */}
@@ -262,10 +324,11 @@ export const GameScreen: React.FC<GameScreenProps> = ({
           aria-label="Harf Taşları Labirenti"
           className="absolute inset-0 z-20 pointer-events-auto"
         >
-          {level.nodes.map((node) => {
+          {nodes.map((node) => {
             const isFound = foundIds.has(node.id);
             const isWobbling = wobbleId === node.id;
             const isHinted = hintedId === node.id;
+            const isStartStone = node.isTarget && node.orderIndex === 1;
 
             return (
               <button
@@ -275,14 +338,21 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                 onClick={(e) => handleNodeClick(e, node)}
                 aria-label={`Harf ${node.letter}`}
                 style={{
+                  position: 'absolute',
                   left: `${node.left}%`,
                   top: `${node.top}%`,
                   width: `${node.width}%`,
                   height: `${node.height}%`,
+                  minWidth: '38px',
+                  minHeight: '38px',
+                  transform: 'translate(-50%, -50%)',
+                  pointerEvents: 'auto',
+                  cursor: 'pointer',
+                  zIndex: 25,
                 }}
-                className={`absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer flex items-center justify-center rounded-full transition-transform duration-200 active:scale-95 group focus:outline-hidden ${
-                  isWobbling ? 'wobble-wrong' : ''
-                } ${isFound ? 'scale-105' : 'hover:scale-115'}`}
+                className={`stone-node ${isWobbling ? 'wobble-wrong' : ''} ${
+                  isFound ? 'found' : ''
+                }`}
               >
                 {/* Glowing ring if discovered */}
                 {isFound && <span className="stone-glow-ring" />}
@@ -290,14 +360,18 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                 {/* Pulsing golden ring if hinted */}
                 {isHinted && <span className="stone-hint-ring" />}
 
-                {/* Subtle stone text overlay */}
-                <span
-                  className={`font-baloo font-black text-center transition-all duration-200 leading-none select-none text-xs sm:text-base md:text-xl lg:text-2xl ${
-                    isFound
-                      ? 'text-emerald-700 font-extrabold drop-shadow-[0_0_8px_rgba(134,239,172,1)] scale-110'
-                      : 'text-amber-950/20 group-hover:text-amber-950/80 group-hover:drop-shadow-[0_1px_1px_rgba(255,255,255,0.8)]'
-                  }`}
-                >
+                {/* Start flag on the first stone of the path until clicked */}
+                {isStartStone && !isFound && (
+                  <span
+                    className="absolute -top-3.5 -right-2 bg-emerald-600 text-yellow-100 font-baloo text-[9px] font-black px-1.5 py-0.2 rounded-full shadow-md border border-emerald-300 animate-bounce pointer-events-none flex items-center gap-0.5 whitespace-nowrap z-30"
+                    title="Labirent Başlangıcı"
+                  >
+                    🚩 Başla
+                  </span>
+                )}
+
+                {/* Hand painted letter tag on the stone */}
+                <span className="stone-inner-tag">
                   {node.letter}
                 </span>
               </button>
@@ -313,16 +387,16 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             if (collectedCount >= totalTargets) {
               setIsVictory(true);
             } else {
-              const msg = `Sandık kilitli! Kalan ${totalTargets - collectedCount} adet "${level.targetLetter}" taşını bularak aç!`;
+              const msg = `Sandık kilitli! Kalan ${totalTargets - collectedCount} adet "${currentLevel.targetLetter}" taşını bularak aç!`;
               setSpeechMessage(msg);
               sound.speak(msg);
             }
           }}
           style={{
-            right: `${level.chestPosition.right}%`,
-            bottom: `${level.chestPosition.bottom}%`,
-            width: `${level.chestPosition.width}%`,
-            height: `${level.chestPosition.height}%`,
+            right: `${currentLevel.chestPosition.right}%`,
+            bottom: `${currentLevel.chestPosition.bottom}%`,
+            width: `${currentLevel.chestPosition.width}%`,
+            height: `${currentLevel.chestPosition.height}%`,
           }}
           title="Hazine Sandığı!"
           className="absolute z-20 cursor-pointer pointer-events-auto rounded-2xl group flex items-center justify-center hover:ring-4 ring-yellow-400/80 transition-all"
@@ -338,41 +412,41 @@ export const GameScreen: React.FC<GameScreenProps> = ({
           </span>
         </div>
 
-        {/* Mascot Fish & Speech Bubble Area */}
+        {/* Companion Fish Mascot & Speech Bubble */}
         <div
           id="mascot-speech-area"
           className="absolute bottom-2 left-2 sm:bottom-4 sm:left-4 md:bottom-5 md:left-6 z-30 pointer-events-none flex items-end gap-2"
         >
-          {/* Fish Mascot Companion */}
+          {/* Companion Fish Avatar */}
           <button
-            id="fish-mascot-btn"
+            id="fish-helper-avatar"
             type="button"
             onClick={() => {
               sound.playBubble();
               sound.speak(speechMessage);
             }}
-            title="Neşeli Balık Kıpır! Tıklayarak sesli dinle."
+            title="Tatlı Balık Sana Yardımcı Olabilir! Tıkla ve dinle."
             className="pointer-events-auto cursor-pointer animate-float wood-btn-round w-11 h-11 sm:w-14 sm:h-14 md:w-16 md:h-16 flex items-center justify-center text-xl sm:text-2xl md:text-3xl shadow-xl border-2 border-yellow-200 hover:scale-105 active:scale-95 transition-transform"
           >
             🐠
           </button>
 
           {/* Speech Bubble */}
-          <div className="painted-bubble pointer-events-auto px-3 py-1.5 sm:px-4 sm:py-2.5 md:px-5 md:py-3 flex items-center gap-2 sm:gap-3 max-w-[280px] sm:max-w-md md:max-w-lg">
+          <div className="painted-bubble pointer-events-auto px-3 py-1.5 sm:px-4 sm:py-2.5 md:px-5 md:py-3 flex items-center gap-1.5 sm:gap-2.5 max-w-[290px] sm:max-w-md md:max-w-lg">
             {/* Audio speaker trigger */}
             <button
               id="btn-speak-instruction"
               type="button"
               onClick={handleSpeakSpeech}
               title="Mesajı Sesli Oku"
-              className="text-amber-800 hover:text-amber-950 p-1 cursor-pointer"
+              className="text-amber-800 hover:text-amber-950 p-1 cursor-pointer shrink-0"
             >
               <Volume2 className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
 
             <p
               id="speech-text"
-              className="text-[11px] sm:text-sm md:text-base font-bold text-amber-950 leading-tight m-0 flex-1"
+              className="text-[11px] sm:text-sm md:text-base font-bold text-amber-950 leading-tight m-0 flex-1 line-clamp-2"
             >
               {speechMessage}
             </p>
@@ -382,10 +456,22 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               id="btn-hint"
               type="button"
               onClick={handleGiveHint}
-              className="wood-plank px-2 py-1 sm:px-3 sm:py-1.5 text-[11px] sm:text-xs md:text-sm font-bold text-yellow-200 hover:text-white whitespace-nowrap active:scale-95 transition-transform flex items-center gap-1 cursor-pointer"
+              className="wood-plank px-2 py-1 sm:px-2.5 sm:py-1.5 text-[10px] sm:text-xs md:text-sm font-bold text-yellow-200 hover:text-white whitespace-nowrap active:scale-95 transition-transform flex items-center gap-1 cursor-pointer shrink-0"
             >
               <Lightbulb className="w-3.5 h-3.5 text-yellow-300" />
               <span>İpucu</span>
+            </button>
+
+            {/* New Path / Shuffle Button in bubble */}
+            <button
+              id="btn-bubble-new-path"
+              type="button"
+              onClick={handleRegeneratePath}
+              title="Yeni bir rastgele labirent yolu oluştur"
+              className="wood-plank px-2 py-1 sm:px-2.5 sm:py-1.5 text-[10px] sm:text-xs md:text-sm font-bold text-yellow-200 hover:text-white whitespace-nowrap active:scale-95 transition-transform flex items-center gap-1 cursor-pointer shrink-0"
+            >
+              <Shuffle className="w-3 h-3 text-yellow-300" />
+              <span>Yeni Yol</span>
             </button>
           </div>
         </div>
@@ -410,13 +496,13 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         {isVictory && (
           <div
             id="victory-modal"
-            className="absolute inset-0 z-50 bg-black/65 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in"
+            className="absolute inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-fade-in pointer-events-auto"
           >
             <div
               id="victory-card"
               className="wood-plank p-5 sm:p-7 md:p-8 max-w-md w-full text-center relative border-4 border-amber-950 shadow-2xl"
             >
-              {/* Crown Emblem */}
+              {/* Crown Badge */}
               <div className="w-16 h-16 sm:w-20 sm:h-20 mx-auto -mt-12 sm:-mt-16 wood-btn-round flex items-center justify-center text-3xl sm:text-4xl shadow-2xl border-4 border-yellow-300">
                 👑
               </div>
@@ -427,7 +513,9 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
               <p className="text-amber-100 font-semibold text-xs sm:text-sm md:text-base mt-2 mb-3 leading-relaxed">
                 Bütün{' '}
-                <span className="text-yellow-300 font-black text-lg sm:text-xl">"{level.targetLetter}"</span>{' '}
+                <span className="text-yellow-300 font-black text-lg sm:text-xl">
+                  "{currentLevel.targetLetter}"
+                </span>{' '}
                 taşlarını bularak labirenti başarıyla tamamladın ve inci sandığına ulaştın!
               </p>
 
@@ -444,8 +532,8 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                 </span>
               </div>
 
-              {/* Rewards Summary */}
-              <div className="bg-black/30 rounded-xl p-2.5 my-3 flex justify-around text-xs sm:text-sm font-bold text-amber-200">
+              {/* Reward stats */}
+              <div className="bg-black/35 rounded-xl p-2.5 my-3 flex justify-around text-xs sm:text-sm font-bold text-amber-200 border border-amber-900/60">
                 <span className="flex items-center gap-1">
                   <Sparkles className="w-4 h-4 text-yellow-400" /> +{totalTargets * 10} Puan
                 </span>
@@ -453,15 +541,15 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                 <span>⭐ +3 Yıldız</span>
               </div>
 
-              {/* Action Buttons */}
+              {/* Buttons */}
               <div className="flex flex-wrap gap-2.5 sm:gap-3 justify-center mt-4">
                 <button
                   id="btn-play-again"
                   type="button"
-                  onClick={handleRestart}
+                  onClick={handleRegeneratePath}
                   className="wood-plank px-4 py-2 sm:px-5 sm:py-2.5 font-baloo text-sm sm:text-base font-bold text-yellow-200 hover:text-white active:scale-95 transition-transform flex items-center gap-1.5 cursor-pointer"
                 >
-                  <RotateCcw className="w-4 h-4" /> Tekrar Oyna
+                  <RotateCcw className="w-4 h-4" /> Yeni Yolla Tekrar Oyna
                 </button>
                 <button
                   id="btn-next-level"
